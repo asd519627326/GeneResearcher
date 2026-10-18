@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=77,<81", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "generesearcher"
+version = "0.1.8"
+description = "Gene-centered biomedical literature retrieval and analysis pipeline"
+readme = "README.md"
+license = "BSD-2-Clause"
+license-files = ["LICENSE"]
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "biopython>=1.83,<2",
+    "click>=8,<9",
+    # SciSpaCy 0.6.x and its compiled spaCy/thinc stack require NumPy 1.x.
+    "numpy>=1.26,<2",
+    "openai>=1.30,<3",
+    "pandas>=2.2,<4",
+    # Keep the tested local-client/server pair together. Newer Milvus Lite 3.x
+    # pulls a PyArrow/NumPy combination that conflicts with the spaCy 3.7 stack.
+    "pymilvus[milvus_lite]==3.0.0",
+    "milvus-lite==2.5.1",
+    # Milvus Lite 2.5 still imports pkg_resources, removed in Setuptools 81.
+    "setuptools>=68,<81",
+    "python-dotenv>=1.0,<2",
+    "PyYAML>=6,<7",
+    "requests>=2.31,<3",
+    "scispacy>=0.6,<0.7",
+    "spacy>=3.7,<3.8",
+    "tqdm>=4.66,<5",
+]
+
+[project.optional-dependencies]
+dashscope = ["dashscope>=1.20,<2"]
+dev = ["ruff>=0.6,<1"]
+
+[project.scripts]
+generesearcher = "generesearcher.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["generesearcher*"]
+exclude = ["**/__pycache__", "**/.ipynb_checkpoints"]
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["N"]

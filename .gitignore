@@ -1,0 +1,22 @@
+# Operating-system and notebook artifacts
+.DS_Store
+**/.ipynb_checkpoints/
+*.ipynb_checkpoint.py
+
+# Local credentials and environments
+.env
+.venv/
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+
+# Local analysis outputs
+output/
+results/
+analysis_*/
+*.db
+*.log
