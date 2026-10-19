@@ -61,14 +61,16 @@ os.environ["LLM_MODEL_NAME"] = "your-model-name"
 os.environ["LLM_API_KEY"] = "your-llm-api-key"
 os.environ["LLM_BASE_URL"] = "https://your-llm-endpoint/v1"
 
+# Single-gene example based on the paper's SLAMF6 case study.
 config = ResearchConfig(
-    genes=["EP300"],
-    function_name="histone acetylation",
+    genes=["SLAMF6"],
+    function_name="T cell receptor signaling",
     research_background_template=(
-        "What is the role of {gene} in histone acetylation, "
-        "especially in cancer development?"
+        "How does {gene} regulate T cell receptor signaling in tumor-reactive "
+        "T cells, and how is this related to T cell activation, exhaustion, "
+        "antitumor immunity, and cancer immunotherapy response?"
     ),
-    keywords=["cancer", "tumor"],
+    publication_date_before="2026-02-11",
 )
 
 result = run_analysis(config)
@@ -76,28 +78,35 @@ print("Report:", result.report_path)
 print(result.analysis_data.raw_papers_df.head())
 
 # Optional: copy the completed analysis to persistent storage.
-save_analysis(result, "./results/histone_acetylation")
+save_analysis(result, "./results/slamf6_tcr_signaling")
 ```
+
+This follows the SLAMF6 case study in the paper, with a literature cutoff of 11 February 2026. The paper reports 12 retrieved articles and 990 candidate sentences; live reruns may differ as literature records and services change.
 
 Without `project_folder`, results use temporary storage. Call `result.cleanup()` when you no longer need an unsaved result. A new run for the same function in a selected project folder clears that function's previous database and generated exports.
 
 ## <img src="assets/icons/list-ordered.svg" width="30" height="30" alt=""> Ways to Run
 
-**Single gene.** The Quick Start example analyzes one function for `EP300`. It performs gene-level synthesis without an extra cross-gene synthesis.
+**Single gene.** The Quick Start example analyzes `SLAMF6` and T cell receptor signaling in tumor-reactive T cells, antitumor immunity, and cancer immunotherapy. A single-gene run performs gene-level synthesis without an extra cross-gene synthesis.
 
 **Multiple genes.** Keep the target function and research context the same and provide multiple target genes:
 
 ```python
 multi_gene_config = ResearchConfig(
-    genes=["EP300", "CREBBP"],
-    function_name="histone acetylation",
+    genes=[
+        "BCL2", "MCL1", "BCL2L1", "BCL2A1", "TP53",
+        "MYC", "E2F1", "KRAS", "PTPN11", "FLT3",
+    ],
+    function_name="cell apoptosis",
     research_background_template=(
-        "How do {gene} and histone acetylation relate to cancer development?"
+        "How does {gene} contribute to acute myeloid leukemia cell survival "
+        "and therapeutic resistance through its effects on apoptosis?"
     ),
-    keywords=["cancer", "tumor"],
 )
 multi_gene_result = run_analysis(multi_gene_config)
 ```
+
+This follows the paper's acute myeloid leukemia (AML) case study. GeneResearcher analyzes each gene in the same apoptosis and AML context, then adds the multi-gene analyses described in the workflow.
 
 **Run individual stages.** In Jupyter, create one `AnalysisSession` and execute each stage in order, inspecting its in-memory data between cells:
 
@@ -123,7 +132,7 @@ Keep the session object and run stages in order. In a regular Python script, pla
 **Command line.** Create `study.yaml` from `study.example.yaml`, edit the inputs, then run:
 
 ```bash
-python -m generesearcher run --config study.yaml --save-to ./results/example_study
+python -m generesearcher run --config study.yaml --save-to ./results/aml_apoptosis
 ```
 
 ## <img src="assets/icons/workflow.svg" width="30" height="30" alt=""> Workflow and Literature APIs

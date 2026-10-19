@@ -1,20 +1,16 @@
-# One run analyzes one function/pathway for one or more genes.
+# Multi-gene example based on the paper's acute myeloid leukemia case study.
 genes:
-  - EP300
-  - CREBBP
-function_name: histone acetylation
+  - BCL2
+  - MCL1
+  - BCL2L1
+  - BCL2A1
+  - TP53
+  - MYC
+  - E2F1
+  - KRAS
+  - PTPN11
+  - FLT3
+function_name: cell apoptosis
 research_background_template: >-
-  What is the role of {gene} in {function_name}, especially in cancer development?
-keywords:
-  - cancer
-  - tumor
-function_query: null
-exclude_pmids: []
-publication_date_before: null
-gene_aliases:
-  EP300:
-    - p300
-  CREBBP:
-    - CBP
-max_papers_per_gene: 10
-scispacy_model: en_core_sci_lg
+  How does {gene} contribute to acute myeloid leukemia cell survival and
+  therapeutic resistance through its effects on apoptosis?
