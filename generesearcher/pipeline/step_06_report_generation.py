@@ -218,11 +218,14 @@ def build_report_markdown(analysis_data: AnalysisData, services: Dict[str, Any])
         if g not in ranked_genes:
             ranked_genes.append(g)
 
-    target_gene_keys = {
-        str(gene).strip().casefold()
-        for gene in analysis_data.genes
-        if str(gene).strip() and str(gene).strip().casefold() != 'global'
-    }
+    target_genes = []
+    target_gene_keys = set()
+    for gene in analysis_data.genes:
+        gene_name = str(gene).strip()
+        gene_key = gene_name.casefold()
+        if gene_name and gene_key != 'global' and gene_key not in target_gene_keys:
+            target_genes.append(gene_name)
+            target_gene_keys.add(gene_key)
     is_multi_gene = len(target_gene_keys) > 1
 
     md_lines = []
@@ -249,7 +252,24 @@ def build_report_markdown(analysis_data: AnalysisData, services: Dict[str, Any])
     model_name = str(model_name).strip() if model_name else "Unknown"
 
     md_lines.append(f"- Generated Time: {current_time}")
-    md_lines.append(f"- Research Context: {analysis_data.research_background_template}")
+    context_template = analysis_data.research_background_template
+    if target_genes:
+        if len(target_genes) > 1 and "{gene}" in context_template:
+            md_lines.append("- Research Context:")
+            for gene in target_genes:
+                context = context_template.format(
+                    gene=gene,
+                    function_name=analysis_data.function_name,
+                )
+                md_lines.append(f"  - {context}")
+        else:
+            context = context_template.format(
+                gene=target_genes[0],
+                function_name=analysis_data.function_name,
+            )
+            md_lines.append(f"- Research Context: {context}")
+    else:
+        md_lines.append(f"- Research Context: {context_template}")
     md_lines.append(f"- **Analyzed Genes**: {', '.join(analysis_data.genes)}")
     md_lines.append(f"- **Function/Pathway**: {analysis_data.function_name}")
     md_lines.append(f"- LLM Model: {model_name}\n")

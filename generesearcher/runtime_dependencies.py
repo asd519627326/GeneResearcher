@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import warnings
-from contextlib import contextmanager
 from importlib import import_module
 from typing import Any
 
@@ -15,7 +14,7 @@ REQUIRED_IMPORTS = (
     ("numpy", "numpy"),
     ("openai", "openai"),
     ("pandas", "pandas"),
-    ("pymilvus", "pymilvus[milvus_lite]"),
+    ("pymilvus", "pymilvus"),
     ("milvus_lite", "milvus-lite"),
     ("requests", "requests"),
     ("scispacy", "scispacy"),
@@ -31,22 +30,6 @@ SCISPACY_MODEL_VERSIONS = {
     "en_core_sci_lg": "0.5.4",
     "en_core_sci_scibert": "0.5.4",
 }
-
-IMPORT_DISTRIBUTION_HINTS = {"pkg_resources": "setuptools<81"}
-
-
-@contextmanager
-def _suppress_milvus_lite_pkg_resources_warning():
-    """Hide Milvus Lite's known pkg_resources deprecation during its startup."""
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=r"pkg_resources is deprecated as an API\.",
-            category=UserWarning,
-            module=r"milvus_lite",
-        )
-        yield
-
 
 def _load_spacy_model(spacy: Any, model_name: str) -> Any:
     """Load a model while hiding one known tokenizer-regex FutureWarning."""
@@ -74,13 +57,7 @@ def validate_runtime_dependencies() -> None:
     """Import required packages so missing or broken installs fail clearly."""
     for module_name, distribution_name in REQUIRED_IMPORTS:
         try:
-            if module_name in {"pymilvus", "milvus_lite"}:
-                # Milvus Lite can be imported lazily by PyMilvus, and can also
-                # emit this warning later when the local client starts.
-                with _suppress_milvus_lite_pkg_resources_warning():
-                    import_module(module_name)
-            else:
-                import_module(module_name)
+            import_module(module_name)
         except Exception as exc:
             if "numpy.dtype size changed" in str(exc):
                 raise RuntimeError(
@@ -97,9 +74,8 @@ def validate_runtime_dependencies() -> None:
                     f"missing module '{missing_module}' while importing "
                     f"'{module_name}'"
                 )
-                missing_distribution = IMPORT_DISTRIBUTION_HINTS.get(
-                    missing_module,
-                    dict(REQUIRED_IMPORTS).get(missing_module, missing_module),
+                missing_distribution = dict(REQUIRED_IMPORTS).get(
+                    missing_module, missing_module
                 )
                 dependency = f"'{missing_distribution}' ({detail})"
             else:

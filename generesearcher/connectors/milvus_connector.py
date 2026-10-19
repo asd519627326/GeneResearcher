@@ -7,10 +7,7 @@ import json
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional
 
-from ..runtime_dependencies import _suppress_milvus_lite_pkg_resources_warning
-
-with _suppress_milvus_lite_pkg_resources_warning():
-    from pymilvus import MilvusClient, exceptions, CollectionSchema, FieldSchema, DataType, MilvusException
+from pymilvus import MilvusClient, exceptions, CollectionSchema, FieldSchema, DataType, MilvusException
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +36,9 @@ class MilvusManager:
     """
     A manager to interact with Milvus Lite, handling both sentence and query collections.
     """
+    _COMPATIBILITY_VECTOR_FIELD = "_compat_vector"
+    _COMPATIBILITY_VECTOR_VALUE = [0.0]
+
     def __init__(self, db_path: str, collection_name: str, dimension: Optional[int]):
         self.db_path = db_path
         self.dimension = dimension
@@ -57,19 +57,16 @@ class MilvusManager:
 
         try:
             logger.debug("Initializing Milvus Lite client for database '%s'.", self.db_path)
-            # Milvus Lite 2.5 imports pkg_resources during local client startup;
-            # suppress only its known deprecation notice around that import path.
-            with _suppress_milvus_lite_pkg_resources_warning():
-                self.client = MilvusClient(
-                    self.db_path,
-                    # Keep the gRPC options scoped to this manager and let close() release
-                    # the channel instead of reusing a shared idle Lite connection.
-                    dedicated=True,
-                    # PyMilvus 3.0.0 otherwise sends idle keepalive pings every 10s.
-                    # Milvus Lite's embedded gRPC server can reject that cadence with
-                    # GOAWAY ENHANCE_YOUR_CALM (too_many_pings) during long model calls.
-                    grpc_options={"grpc.keepalive_permit_without_calls": False},
-                )
+            self.client = MilvusClient(
+                self.db_path,
+                # Keep the gRPC options scoped to this manager and let close() release
+                # the channel instead of reusing a shared idle Lite connection.
+                dedicated=True,
+                # PyMilvus 3.0.0 otherwise sends idle keepalive pings every 10s.
+                # Milvus Lite's embedded gRPC server can reject that cadence with
+                # GOAWAY ENHANCE_YOUR_CALM (too_many_pings) during long model calls.
+                grpc_options={"grpc.keepalive_permit_without_calls": False},
+            )
             logger.debug("Connected to Milvus Lite database '%s'.", self.db_path)
             # --- Setup both collections ---
             self._setup_sentence_collection()
@@ -124,6 +121,66 @@ class MilvusManager:
         finally:
             iterator.close()
         return rows
+
+    def _compatibility_vector_field(self) -> FieldSchema:
+        """Milvus Lite 3.x requires every collection schema to contain a vector field."""
+        return FieldSchema(
+            name=self._COMPATIBILITY_VECTOR_FIELD,
+            dtype=DataType.FLOAT_VECTOR,
+            dim=1,
+        )
+
+    def _create_index_and_wait_for_completion(
+        self,
+        collection_name: str,
+        index_params: Any,
+        index_name: str,
+    ) -> None:
+        """Create an index asynchronously, then poll without PyMilvus's TSO RPC."""
+        self.client.create_index(
+            collection_name=collection_name,
+            index_params=index_params,
+            sync=False,
+        )
+
+        while True:
+            index_info = self.client.describe_index(
+                collection_name=collection_name,
+                index_name=index_name,
+            )
+            if index_info is None:
+                raise MilvusException(
+                    message=(
+                        f"Milvus did not return index '{index_name}' for collection "
+                        f"'{collection_name}' after index creation."
+                    )
+                )
+
+            state = str(index_info.get("state", "")).casefold()
+            if state == "finished":
+                return
+            if state == "failed":
+                reason = index_info.get("index_state_fail_reason") or "No failure reason provided."
+                raise MilvusException(
+                    message=(
+                        f"Index '{index_name}' for collection '{collection_name}' failed: "
+                        f"{reason}"
+                    )
+                )
+
+            time.sleep(0.5)
+
+    def _upsert_scalar_records(
+        self,
+        collection_name: str,
+        entities: List[Dict[str, Any]],
+    ):
+        """Upsert scalar records with the unused vector required by Milvus Lite 3.x."""
+        records = [
+            {**entity, self._COMPATIBILITY_VECTOR_FIELD: self._COMPATIBILITY_VECTOR_VALUE}
+            for entity in entities
+        ]
+        return self.client.upsert(collection_name, records)
     
     # --- Methods for Sentence Collection ---
 
@@ -153,20 +210,36 @@ class MilvusManager:
                 
                 # Create vector index
                 index_params_vec = self.client.prepare_index_params()
-                index_params_vec.add_index(field_name="raw_embedding", metric_type="COSINE")
-                self.client.create_index(collection_name, index_params_vec)
+                index_params_vec.add_index(
+                    field_name="raw_embedding",
+                    index_type="HNSW",
+                    metric_type="COSINE",
+                )
+                self._create_index_and_wait_for_completion(
+                    collection_name,
+                    index_params_vec,
+                    "raw_embedding",
+                )
                 
                 # Create scalar indexes
                 for field in ["gene", "pmid"]:
-                    index_params = self.client.prepare_index_params()
-                    index_params.add_index(field_name=field)
-                    self.client.create_index(collection_name, index_params)
+                    self._create_scalar_index(collection_name, field)
                 logger.debug("Created indexes for Milvus collection '%s'.", collection_name)
 
             self.client.load_collection(collection_name)
             logger.debug("Loaded sentence collection '%s'.", collection_name)
         except exceptions.MilvusException as e:
             raise RuntimeError(f"Could not initialize sentence collection '{collection_name}'.") from e
+
+    def _create_scalar_index(self, collection_name: str, field_name: str) -> None:
+        """Create the explicit scalar index required by Milvus Lite 3.x."""
+        index_params = self.client.prepare_index_params()
+        index_params.add_index(field_name=field_name, index_type="INVERTED")
+        self._create_index_and_wait_for_completion(
+            collection_name,
+            index_params,
+            field_name,
+        )
 
     # --- NEW: Methods for Query Collection ---
 
@@ -217,6 +290,7 @@ class MilvusManager:
             FieldSchema(name="abstract_text", dtype=DataType.VARCHAR, max_length=65535),
             FieldSchema(name="paragraphs_text", dtype=DataType.VARCHAR, max_length=65535),
             FieldSchema(name="reasoning_trace", dtype=DataType.VARCHAR, max_length=65535),
+            self._compatibility_vector_field(),
         ]
         return CollectionSchema(fields=fields, description="Collection for Step 3 LLM analysis results", enable_dynamic_field=False)
 
@@ -231,9 +305,7 @@ class MilvusManager:
                 
                 # Crear índices escalares para búsquedas rápidas
                 for field in ["pmid", "gene", "analysis_type", "model_name"]:
-                    index_params = self.client.prepare_index_params()
-                    index_params.add_index(field_name=field)
-                    self.client.create_index(collection_name, index_params)
+                    self._create_scalar_index(collection_name, field)
                 logger.debug("Created indexes for Milvus collection '%s'.", collection_name)
 
             self.client.load_collection(collection_name)
@@ -247,7 +319,7 @@ class MilvusManager:
             return None
         try:
             entities = self._store_long_text_fields("llm_analysis", entities)
-            result = self.client.upsert(self.llm_analysis_collection_name, entities)
+            result = self._upsert_scalar_records(self.llm_analysis_collection_name, entities)
             self.client.flush(collection_name=self.llm_analysis_collection_name)
             logger.debug(
                 "Upserted and flushed %s entity(ies) to '%s'.",
@@ -276,6 +348,7 @@ class MilvusManager:
             FieldSchema(name="summary_text", dtype=DataType.VARCHAR, max_length=65535),
             # For per-doc: JSON list of evidence sentences. For final: JSON list of source PMIDs.
             FieldSchema(name="evidence_text", dtype=DataType.VARCHAR, max_length=65535),
+            self._compatibility_vector_field(),
         ]
         return CollectionSchema(fields=fields, description="Collection for Step 4 Synthesis results", enable_dynamic_field=False)
 
@@ -290,9 +363,7 @@ class MilvusManager:
                 
                 # Create scalar indexes for faster filtering
                 for field in ["pmid", "gene", "analysis_type", "summary_level"]:
-                    index_params = self.client.prepare_index_params()
-                    index_params.add_index(field_name=field)
-                    self.client.create_index(collection_name, index_params)
+                    self._create_scalar_index(collection_name, field)
                 logger.debug("Created indexes for Milvus collection '%s'.", collection_name)
 
             self.client.load_collection(collection_name)
@@ -306,7 +377,7 @@ class MilvusManager:
             return None
         try:
             entities = self._store_long_text_fields("synthesis", entities)
-            result = self.client.upsert(self.synthesis_collection_name, entities)
+            result = self._upsert_scalar_records(self.synthesis_collection_name, entities)
             self.client.flush(collection_name=self.synthesis_collection_name)
             logger.debug(
                 "Upserted and flushed %s entity(ies) to '%s'.",
@@ -334,6 +405,7 @@ class MilvusManager:
             # Store the full CoT conversation as a JSON string
             FieldSchema(name="cot_trace", dtype=DataType.VARCHAR, max_length=65535),
             FieldSchema(name="final_result", dtype=DataType.VARCHAR, max_length=65535),
+            self._compatibility_vector_field(),
         ]
         return CollectionSchema(fields=fields, description="Collection for Step 5 Reporting CoT traces", enable_dynamic_field=False)
 
@@ -346,9 +418,7 @@ class MilvusManager:
                 schema = self._get_reporting_collection_schema()
                 self.client.create_collection(collection_name=collection_name, schema=schema)
                 # Index
-                index_params = self.client.prepare_index_params()
-                index_params.add_index(field_name="analysis_type")
-                self.client.create_index(collection_name, index_params)
+                self._create_scalar_index(collection_name, "analysis_type")
             self.client.load_collection(collection_name)
         except exceptions.MilvusException as e:
             raise RuntimeError(f"Could not initialize reporting collection '{collection_name}'.") from e
@@ -362,6 +432,7 @@ class MilvusManager:
             FieldSchema(name="pmid", dtype=DataType.VARCHAR, max_length=128),
             FieldSchema(name="chunk_index", dtype=DataType.INT64),
             FieldSchema(name="payload", dtype=DataType.VARCHAR, max_length=60000),
+            self._compatibility_vector_field(),
         ]
         return CollectionSchema(fields=fields, description="Retrieved paper metadata and text", enable_dynamic_field=False)
 
@@ -378,6 +449,7 @@ class MilvusManager:
             FieldSchema(name="pmid", dtype=DataType.VARCHAR, max_length=128),
             FieldSchema(name="sentence_id", dtype=DataType.VARCHAR, max_length=1024),
             FieldSchema(name="payload", dtype=DataType.VARCHAR, max_length=60000),
+            self._compatibility_vector_field(),
         ]
         return CollectionSchema(fields=fields, description="Authoritative Step 2 recall results", enable_dynamic_field=False)
 
@@ -448,7 +520,7 @@ class MilvusManager:
             normalized_entities.append(entity)
 
         for start in range(0, len(overflow_entities), 500):
-            self.client.upsert(
+            self._upsert_scalar_records(
                 self.paper_data_collection_name,
                 overflow_entities[start:start + 500],
             )
@@ -488,7 +560,7 @@ class MilvusManager:
     def save_retrieval_status(self, status: str) -> None:
         if status not in {"running", "completed", "no_results"}:
             raise ValueError(f"Unsupported retrieval status: {status}")
-        self.client.upsert(self.paper_data_collection_name, [{
+        self._upsert_scalar_records(self.paper_data_collection_name, [{
             "record_id": "pipeline:retrieval_status",
             "article_id": "pipeline:state",
             "record_type": "retrieval_status",
@@ -513,7 +585,7 @@ class MilvusManager:
             raise ValueError(f"Invalid pipeline stage name: {stage!r}")
         record_id = f"pipeline:stage_status:{stage}"
         payload = json.dumps({"status": status, "details": details or {}}, ensure_ascii=False)
-        self.client.upsert(self.paper_data_collection_name, [{
+        self._upsert_scalar_records(self.paper_data_collection_name, [{
             "record_id": record_id,
             "article_id": "pipeline:state",
             "record_type": "pipeline_status",
@@ -627,7 +699,7 @@ class MilvusManager:
                 self.client.delete(collection_name=self.paper_data_collection_name, ids=obsolete_ids)
 
         for start in range(0, len(entities), 500):
-            self.client.upsert(self.paper_data_collection_name, entities[start:start + 500])
+            self._upsert_scalar_records(self.paper_data_collection_name, entities[start:start + 500])
         self.client.flush(collection_name=self.paper_data_collection_name)
 
     def load_retrieved_papers(self) -> List[Dict[str, Any]]:
@@ -704,7 +776,7 @@ class MilvusManager:
             })
 
         for start in range(0, len(entities), 500):
-            self.client.upsert(self.recall_results_collection_name, entities[start:start + 500])
+            self._upsert_scalar_records(self.recall_results_collection_name, entities[start:start + 500])
         self.client.flush(collection_name=self.recall_results_collection_name)
 
     def load_recall_results(self) -> List[Dict[str, Any]]:
@@ -798,7 +870,7 @@ class MilvusManager:
         if not entities: return
         try:
             entities = self._store_long_text_fields("reporting", entities)
-            result = self.client.upsert(self.reporting_collection_name, entities)
+            result = self._upsert_scalar_records(self.reporting_collection_name, entities)
             self.client.flush(collection_name=self.reporting_collection_name)
             logger.debug("Upserted %s entity(ies) to '%s'.", len(entities), self.reporting_collection_name)
             return result

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=77,<81", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "generesearcher"
-version = "0.1.8"
+version = "0.1.10"
 description = "Gene-centered biomedical literature retrieval and analysis pipeline"
 readme = "README.md"
 license = "BSD-2-Clause"
@@ -17,12 +17,14 @@ dependencies = [
     "numpy>=1.26,<2",
     "openai>=1.30,<3",
     "pandas>=2.2,<4",
-    # Keep the tested local-client/server pair together. Newer Milvus Lite 3.x
-    # pulls a PyArrow/NumPy combination that conflicts with the spaCy 3.7 stack.
-    "pymilvus[milvus_lite]==3.0.0",
-    "milvus-lite==2.5.1",
-    # Milvus Lite 2.5 still imports pkg_resources, removed in Setuptools 81.
-    "setuptools>=68,<81",
+    # PyMilvus requires setuptools>=78.1.1 without an upper bound; keep it
+    # compatible with environments whose installed Torch requires setuptools<82.
+    "setuptools>=78.1.1,<82",
+    # Install Milvus Lite directly: PyMilvus's extra omits it on Windows.
+    "pymilvus==3.0.0",
+    "milvus-lite==3.2.2",
+    # Keep PyArrow on the tested NumPy 1.x-compatible line used with SciSpaCy.
+    "pyarrow>=15,<23",
     "python-dotenv>=1.0,<2",
     "PyYAML>=6,<7",
     "requests>=2.31,<3",
