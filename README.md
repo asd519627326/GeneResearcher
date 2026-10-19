@@ -22,18 +22,6 @@ GeneResearcher supports this next step in biological interpretation by helping r
 
 In shared Jupyter or Colab runtimes, pip may also warn that preinstalled packages require NumPy 2.x. This can be an environment conflict rather than a failed GeneResearcher installation; SciSpaCy currently requires NumPy `<2`. Restart the kernel if installation replaces NumPy or spaCy that was already loaded.
 
-### Version 0.1.9
-
-- Migrates the local database engine to Milvus Lite 3.2.2 and updates collection schemas and index creation for the 3.x engine.
-- Fixes `{gene}` and `{function_name}` substitution in the report's Research Context section, including per-gene contexts in multi-gene reports.
-- Removes the old `pkg_resources` warning workaround used for Milvus Lite 2.5.1.
-
-> **Database compatibility:** Databases created by earlier releases using Milvus Lite 2.5.1 cannot be opened or migrated by 0.1.9 or later. Keep existing analysis folders as archives and use a new project folder for newer releases.
-
-### Version 0.1.10
-
-- Bounds the `setuptools` dependency required by PyMilvus to avoid conflicts with common environments that pin it below 82.
-
 Install the package and default language model:
 
 ```bash
